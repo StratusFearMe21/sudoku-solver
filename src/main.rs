@@ -50,14 +50,7 @@ macro_rules! draw {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .margin(5)
-                .constraints(
-                    [
-                        Constraint::Min(0),
-                        Constraint::Length(11),
-                        Constraint::Min(0),
-                    ]
-                    .as_ref(),
-                )
+                .constraints([Constraint::Length(11), Constraint::Min(0)].as_ref())
                 .split(size);
 
             let block = tui::widgets::Block::default()
@@ -78,6 +71,16 @@ macro_rules! draw {
                 .style(Style::default().bg(Color::White).fg(Color::Black))
                 .block(create_block("Board"))
                 .alignment(Alignment::Center);
+            f.render_widget(paragraph, chunks[0]);
+            let paragraph = Paragraph::new(vec![
+                Spans::from("Hit enter to solve puzzle"),
+                Spans::from("- Make sure that the puzzle does not require guessing (programs such as KSudoku can tell you this)"),
+                Spans::from("- Make sure that the numbers 1-9 are present in the puzzle"),
+                Spans::from("- Make sure all numbers in puzzle are correct"),
+            ])
+            .style(Style::default().bg(Color::White).fg(Color::Black))
+            .block(create_block("Instructions"))
+            .alignment(Alignment::Center);
             f.render_widget(paragraph, chunks[1]);
         })
         .unwrap();

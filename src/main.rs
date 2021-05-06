@@ -2,9 +2,12 @@
  * My very cool sudoku program
  */
 
+#[cfg(not(windows))]
+#[global_allocator]
+static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 use std::{
     io::stdout,
-    sync::Arc,
     thread,
     time::{Duration, Instant},
 };
@@ -13,7 +16,7 @@ use crossterm::{
     event, execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use dashmap::{DashMap, DashSet};
+use dashmap::DashSet;
 use rayon::iter::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
 };
@@ -50,7 +53,7 @@ macro_rules! draw {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .margin(5)
-                .constraints([Constraint::Length(11), Constraint::Min(0)].as_ref())
+                .constraints([Constraint::Percentage(100)].as_ref())
                 .split(size);
 
             let block = tui::widgets::Block::default()
@@ -72,16 +75,6 @@ macro_rules! draw {
                 .block(create_block("Board"))
                 .alignment(Alignment::Center);
             f.render_widget(paragraph, chunks[0]);
-            let paragraph = Paragraph::new(vec![
-                Spans::from("Hit enter to solve puzzle"),
-                Spans::from("- Make sure that the puzzle does not require guessing (programs such as KSudoku can tell you this)"),
-                Spans::from("- Make sure that the numbers 1-9 are present in the puzzle"),
-                Spans::from("- Make sure all numbers in puzzle are correct"),
-            ])
-            .style(Style::default().bg(Color::White).fg(Color::Black))
-            .block(create_block("Instructions"))
-            .alignment(Alignment::Center);
-            f.render_widget(paragraph, chunks[1]);
         })
         .unwrap();
     };
@@ -98,27 +91,6 @@ fn main() {
 
     let mut terminal = Terminal::new(backend).unwrap();
 
-    let (tx, rx) = crossbeam_channel::unbounded();
-
-    // Keyboard listener
-    thread::spawn(move || loop {
-        let mut last_tick = Instant::now();
-        if event::poll(
-            TICKRATE
-                .checked_sub(last_tick.elapsed())
-                .unwrap_or_else(|| Duration::from_secs(0)),
-        )
-        .unwrap()
-        {
-            if let event::Event::Key(key) = event::read().unwrap() {
-                tx.send(key).unwrap();
-            }
-        }
-        if last_tick.elapsed() >= TICKRATE {
-            last_tick = Instant::now();
-        }
-    });
-
     terminal.clear().unwrap();
 
     // The sudoku board
@@ -133,8 +105,11 @@ fn main() {
         }),
     )
     .unwrap();
+
+    // Used to keep track of just whether there is a number in a square.
     let mut boardbools: [[bool; 9]; 9] = [[false; 9]; 9];
 
+    // Fill boardbools
     for (i, j) in board.iter().enumerate() {
         for (x, y) in j.iter().enumerate() {
             if y.clone() != 0 {
@@ -143,61 +118,32 @@ fn main() {
         }
     }
 
-    // Used for editing the board
-    let mut index: (usize, usize) = (0, 0);
-
-    draw!(terminal, board);
-
-    loop {
-        // Listen for key presses
-        match rx.recv().unwrap() {
-            event => match event.code {
-                event::KeyCode::Char('q') | event::KeyCode::Enter => {
-                    // Start solving the given board
-                    break;
-                }
-                event::KeyCode::Char(c) => {
-                    let num: u8 = c.to_digit(10).unwrap_or(0) as u8;
-                    board[index.0][index.1] = num;
-                    boardbools[index.0][index.1] = true;
-                    index.1 += 1;
-                    if index.1 == 9 {
-                        index.0 += 1;
-                        index.1 = 0;
-                    }
-                    draw!(terminal, board);
-                }
-                event::KeyCode::Backspace => {
-                    index.1 -= 1;
-                    board[index.0][index.1] = 0;
-                    boardbools[index.0][index.1] = false;
-                    draw!(terminal, board);
-                }
-                _ => {}
-            },
-        };
-    }
-
     // Whether the algorithm should keep solving
     let mut recurse = true;
 
-    let mut available: Vec<u8> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
+    // let mut available: Vec<u8> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
+
+    // Time starts here
+    let time = Instant::now();
 
     while recurse {
+        // let mut numtoremove: DashSet<usize> = DashSet::new();
+
         // What to add to the board after an iteration
         let additions: DashSet<((usize, usize), u8)> = DashSet::new();
 
         // Iterate for each number possible in sudoku
-        available.clone().into_par_iter().for_each(|numberon| {
+        (1 as u8..=9 as u8).into_par_iter().for_each(|numberon| {
             // Positions of number being processed
             let positions: DashSet<(usize, usize)> = DashSet::new();
 
             // Determine what "positions" should be
             board.par_iter().enumerate().for_each(|(rownum, row)| {
-                let positionsraw = row.par_iter().positions(|&val| val == numberon);
-                positionsraw.into_par_iter().for_each(|val| {
-                    positions.insert((rownum, val));
-                });
+                row.par_iter()
+                    .positions(|&val| val == numberon)
+                    .for_each(|val| {
+                        positions.insert((rownum, val));
+                    });
             });
 
             // Converts DashSet into Vec for paralell iteration
@@ -229,6 +175,7 @@ fn main() {
 
                     // Fill block of number with impossible positions
                     2 => {
+                        // Determine the block that the number is in
                         let finalblock: (usize, usize) = (
                             match position.0 {
                                 0..=2 => 1,
@@ -241,66 +188,80 @@ fn main() {
                                 _ => 3,
                             },
                         );
+
+                        // Process based on block determined
                         match finalblock {
+                            // Block 1
                             (1, 1) => {
-                                (0..=2).into_par_iter().for_each(|r| {
-                                    (0..=2).into_par_iter().for_each(|c| {
-                                        impossiblepos.insert((r as usize, c as usize));
+                                // Look through indexes 0-2 in first 3 row
+                                (0 as usize..=2 as usize).into_par_iter().for_each(|r| {
+                                    // Look throguh indexes 0-2 in first 3 columns
+                                    (0 as usize..=2 as usize).into_par_iter().for_each(|c| {
+                                        // Insert these indexes into a DashSet for further processing
+                                        impossiblepos.insert((r, c));
                                     });
                                 });
                             }
+                            // Block 2
                             (1, 2) => {
-                                (0..=2).into_par_iter().for_each(|r| {
-                                    (3..=5).into_par_iter().for_each(|c| {
+                                (0 as usize..=2 as usize).into_par_iter().for_each(|r| {
+                                    (3 as usize..=5 as usize).into_par_iter().for_each(|c| {
                                         impossiblepos.insert((r as usize, c as usize));
                                     });
                                 });
                             }
+                            // Block 3
                             (1, 3) => {
-                                (0..=2).into_par_iter().for_each(|r| {
-                                    (6..=8).into_par_iter().for_each(|c| {
+                                (0 as usize..=2 as usize).into_par_iter().for_each(|r| {
+                                    (6 as usize..=8 as usize).into_par_iter().for_each(|c| {
                                         impossiblepos.insert((r as usize, c as usize));
                                     });
                                 });
                             }
+                            // Block 4
                             (2, 1) => {
-                                (3..=5).into_par_iter().for_each(|r| {
-                                    (0..=2).into_par_iter().for_each(|c| {
+                                (3 as usize..=5 as usize).into_par_iter().for_each(|r| {
+                                    (0 as usize..=2 as usize).into_par_iter().for_each(|c| {
                                         impossiblepos.insert((r as usize, c as usize));
                                     });
                                 });
                             }
+                            // Block 5
                             (2, 2) => {
-                                (3..=5).into_par_iter().for_each(|r| {
-                                    (3..=5).into_par_iter().for_each(|c| {
+                                (3 as usize..=5 as usize).into_par_iter().for_each(|r| {
+                                    (3 as usize..=5 as usize).into_par_iter().for_each(|c| {
                                         impossiblepos.insert((r as usize, c as usize));
                                     });
                                 });
                             }
+                            // Block 6
                             (2, 3) => {
-                                (3..=5).into_par_iter().for_each(|r| {
-                                    (6..=8).into_par_iter().for_each(|c| {
+                                (3 as usize..=5 as usize).into_par_iter().for_each(|r| {
+                                    (6 as usize..=8 as usize).into_par_iter().for_each(|c| {
                                         impossiblepos.insert((r as usize, c as usize));
                                     });
                                 });
                             }
+                            // Block 7
                             (3, 1) => {
-                                (6..=8).into_par_iter().for_each(|r| {
-                                    (0..=2).into_par_iter().for_each(|c| {
+                                (6 as usize..=8 as usize).into_par_iter().for_each(|r| {
+                                    (0 as usize..=2 as usize).into_par_iter().for_each(|c| {
                                         impossiblepos.insert((r as usize, c as usize));
                                     });
                                 });
                             }
+                            // Block 8
                             (3, 2) => {
-                                (6..=8).into_par_iter().for_each(|r| {
-                                    (3..=5).into_par_iter().for_each(|c| {
+                                (6 as usize..=8 as usize).into_par_iter().for_each(|r| {
+                                    (3 as usize..=5 as usize).into_par_iter().for_each(|c| {
                                         impossiblepos.insert((r as usize, c as usize));
                                     });
                                 });
                             }
+                            // Block 9
                             (3, 3) => {
-                                (6..=8).into_par_iter().for_each(|r| {
-                                    (6..=8).into_par_iter().for_each(|c| {
+                                (6 as usize..=8 as usize).into_par_iter().for_each(|r| {
+                                    (6 as usize..=8 as usize).into_par_iter().for_each(|c| {
                                         impossiblepos.insert((r as usize, c as usize));
                                     });
                                 });
@@ -311,59 +272,73 @@ fn main() {
                     _ => {}
                 })
             });
-            let impossibleposvec: Vec<(usize, usize)> = impossiblepos.into_iter().collect();
+            // let mut falsenum: usize = 0;
+            // for i in 0..9 {
+            //     falsenum += boardbools[i]
+            //         .par_iter()
+            //         .enumerate()
+            //         .positions(|(j, x)| x == &false && !impossibleposvec.contains(&(i, j)))
+            //         .count();
+            //   }
+            //   if impossibleposvec.len() + falsenum == 81 {
+            //       numtoremove.insert(
+            //        available
+            //            .par_iter()
+            //            .position_any(|x| x == &numberon)
+            //            .unwrap(),
+            //    );
+            // }
 
+            // At this point, we start to actually insert numbers into the board based on the places where the number cannot go
             (0..=1).into_par_iter().for_each(|state| match state {
+                // Analyze rows
                 0 => {
-                    (0..9).into_par_iter().for_each(|row: i32| {
+                    // Iterate through each row
+                    (0 as usize..9 as usize).into_par_iter().for_each(|row| {
+                        // We use this variable to determine where in the row it is not possible to place the number
                         let mut rowabs: [bool; 9] = [false; 9];
-                        impossibleposvec
-                            .iter()
-                            .filter(|i| i.0 == row as usize)
-                            .for_each(|pos| {
-                                rowabs[pos.1] = true;
-                            });
-                        boardbools[row as usize]
-                            .iter()
-                            .enumerate()
-                            .for_each(|(i, index)| {
-                                if index.clone() {
-                                    rowabs[i] = true;
-                                }
-                            });
-                        let numtrue = rowabs.into_par_iter().positions(|x| x == &true).count();
-                        if numtrue == 8 {
+                        // Iterate through each impossible possition in the row
+                        impossiblepos.iter().filter(|i| i.0 == row).for_each(|pos| {
+                            // Add the indexes to the list
+                            rowabs[pos.1] = true;
+                        });
+                        // Iterate where there are already numbers in the row
+                        boardbools[row].iter().enumerate().for_each(|(i, index)| {
+                            // If there is a number already in the row
+                            if index.clone() {
+                                // Add it's position to the index
+                                rowabs[i] = true;
+                            }
+                        });
+                        // If there is 1 single empty space in the row that is not marked by a
+                        // number or an impossible position
+                        if rowabs.into_par_iter().positions(|x| x == &true).count() == 8 {
+                            // Add the number being processed into this space
                             additions.insert((
-                                (
-                                    row as usize,
-                                    rowabs.into_par_iter().position_any(|x| !x).unwrap(),
-                                ),
+                                (row, rowabs.into_par_iter().position_any(|x| !x).unwrap()),
                                 numberon,
                             ));
                         }
                     });
                 }
+                // Analyze columns
                 1 => {
-                    (0..9).into_par_iter().for_each(|column: i32| {
+                    (0 as usize..9 as usize).into_par_iter().for_each(|column| {
                         let mut rowabs: [bool; 9] = [false; 9];
-                        impossibleposvec
+                        impossiblepos
                             .iter()
-                            .filter(|i| i.1 == column as usize)
+                            .filter(|i| i.1 == column)
                             .for_each(|pos| {
                                 rowabs[pos.0] = true;
                             });
                         boardbools.iter().enumerate().for_each(|(i, list)| {
-                            if list[column as usize] {
+                            if list[column] {
                                 rowabs[i] = true;
                             }
                         });
-                        let numtrue = rowabs.into_par_iter().positions(|x| x == &true).count();
-                        if numtrue == 8 {
+                        if rowabs.into_par_iter().positions(|x| x == &true).count() == 8 {
                             additions.insert((
-                                (
-                                    rowabs.into_par_iter().position_any(|x| !x).unwrap(),
-                                    column as usize,
-                                ),
+                                (rowabs.into_par_iter().position_any(|x| !x).unwrap(), column),
                                 numberon,
                             ));
                         }
@@ -372,16 +347,52 @@ fn main() {
                 _ => {}
             });
         });
+        // If there is nothing else to do then stop recursing
         if additions.iter().count() == 0 {
             recurse = false;
         } else {
+            // If there is still more to do, dump our previous iteration onto the board and repeat
+            // the loop
             additions.iter().for_each(|i| {
                 board[i.0 .0][i.0 .1] = i.1;
                 boardbools[i.0 .0][i.0 .1] = true;
             });
         }
+        /*
+         * At this point we would remove the numbers from the iterator where there are no more
+         * possible squares that it could go, but I couldn't find a way to do this that would
+         * introduce significant performance improvements
+         */
+        // for i in numtoremove {
+        //     available.remove(i);
+        // }
     }
+
+    // At this point the puzzle is solved
+    let end = time.elapsed();
+
+    // The rest of the code simply displays the puzzle to the screen
     draw!(terminal, board);
+
+    let (tx, rx) = crossbeam_channel::unbounded();
+
+    thread::spawn(move || loop {
+        let mut last_tick = Instant::now();
+        if event::poll(
+            TICKRATE
+                .checked_sub(last_tick.elapsed())
+                .unwrap_or_else(|| Duration::from_secs(0)),
+        )
+        .unwrap()
+        {
+            if let event::Event::Key(key) = event::read().unwrap() {
+                tx.send(key).unwrap();
+            }
+        }
+        if last_tick.elapsed() >= TICKRATE {
+            last_tick = Instant::now();
+        }
+    });
 
     loop {
         match rx.recv().unwrap() {
@@ -390,22 +401,8 @@ fn main() {
                     disable_raw_mode().unwrap();
                     execute!(terminal.backend_mut(), LeaveAlternateScreen).unwrap();
                     terminal.show_cursor().unwrap();
+                    println!("Solved in: {:?} millis", end.as_millis());
                     break;
-                }
-                event::KeyCode::Char(c) => {
-                    let num: u8 = c.to_digit(10).unwrap_or(0) as u8;
-                    board[index.0][index.1] = num;
-                    index.1 += 1;
-                    if index.1 == 9 {
-                        index.0 += 1;
-                        index.1 = 0;
-                    }
-                    draw!(terminal, board);
-                }
-                event::KeyCode::Backspace => {
-                    index.1 -= 1;
-                    board[index.0][index.1] = 0;
-                    draw!(terminal, board);
                 }
                 _ => {}
             },

@@ -8,9 +8,16 @@ edition = "2018"
 
 [dependencies]
 rayon = "*"
-tui = { version = "*", features = ["crossterm"] }
+tui = { version = "*", default-features = false, features = ["crossterm"] }
 crossterm = "*"
-crossbeam-channel = "*"
 dashmap = "*"
-serde = { version = "*", features = ["derive"] }
+crossbeam-channel = "*"
 serde_json = "*"
+
+[target.'cfg(not(windows))'.dependencies]
+jemallocator = "*"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"

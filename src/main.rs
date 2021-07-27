@@ -196,23 +196,6 @@ fn main() {
                     });
                 });
             });
-            // let mut falsenum: usize = 0;
-            // for i in 0..9 {
-            //     falsenum += boardbools[i]
-            //         .par_iter()
-            //         .enumerate()
-            //         .positions(|(j, x)| x == &false && !impossibleposvec.contains(&(i, j)))
-            //         .count();
-            //   }
-            //   if impossibleposvec.len() + falsenum == 81 {
-            //       numtoremove.insert(
-            //        available
-            //            .par_iter()
-            //            .position_any(|x| x == &numberon)
-            //            .unwrap(),
-            //    );
-            // }
-
             // At this point, we start to actually insert numbers into the board based on the places where the number cannot go
             rayon::scope(|s| {
                 // Analyze rows
@@ -281,14 +264,6 @@ fn main() {
                 boardbools[i.0 .0][i.0 .1] = true;
             });
         }
-        /*
-         * At this point we would remove the numbers from the iterator where there are no more
-         * possible squares that it could go, but I couldn't find a way to do this that would
-         * introduce significant performance improvements
-         */
-        // for i in numtoremove {
-        //     available.remove(i);
-        // }
     }
 
     // At this point the puzzle is solved

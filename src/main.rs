@@ -155,26 +155,30 @@ fn main() {
             // Determines which positions are impossible for the number in processing can go.
             finalpos.into_par_iter().for_each(|position| {
                 // Determines which operation is being done on the number
-                (0..=2).into_par_iter().for_each(|state| match state {
+                rayon::scope(|s| {
                     // Fill row of number with impossible positions
-                    0 => board[position.0]
-                        .par_iter()
-                        .enumerate()
-                        .for_each(|(val, &b)| {
-                            if b == 0 {
-                                impossiblepos.insert((position.0, val));
-                            }
-                        }),
+                    s.spawn(|_| {
+                        board[position.0]
+                            .par_iter()
+                            .enumerate()
+                            .for_each(|(val, &b)| {
+                                if b == 0 {
+                                    impossiblepos.insert((position.0, val));
+                                }
+                            })
+                    });
 
                     // Fill collumn of number with impossible positions
-                    1 => board.par_iter().enumerate().for_each(|(val, b)| {
-                        if b[position.1] == 0 {
-                            impossiblepos.insert((val, position.1));
-                        }
-                    }),
+                    s.spawn(|_| {
+                        board.par_iter().enumerate().for_each(|(val, b)| {
+                            if b[position.1] == 0 {
+                                impossiblepos.insert((val, position.1));
+                            }
+                        })
+                    });
 
                     // Fill block of number with impossible positions
-                    2 => {
+                    s.spawn(|_| {
                         // Determine the block that the number is in
                         let finalblock: (usize, usize) = (
                             match position.0 {
@@ -268,9 +272,8 @@ fn main() {
                             }
                             _ => {}
                         }
-                    }
-                    _ => {}
-                })
+                    });
+                });
             });
             // let mut falsenum: usize = 0;
             // for i in 0..9 {
@@ -290,9 +293,9 @@ fn main() {
             // }
 
             // At this point, we start to actually insert numbers into the board based on the places where the number cannot go
-            (0..=1).into_par_iter().for_each(|state| match state {
+            rayon::scope(|s| {
                 // Analyze rows
-                0 => {
+                s.spawn(|_| {
                     // Iterate through each row
                     (0 as usize..9 as usize).into_par_iter().for_each(|row| {
                         // We use this variable to determine where in the row it is not possible to place the number
@@ -320,9 +323,9 @@ fn main() {
                             ));
                         }
                     });
-                }
+                });
                 // Analyze columns
-                1 => {
+                s.spawn(|_| {
                     (0 as usize..9 as usize).into_par_iter().for_each(|column| {
                         let mut rowabs: [bool; 9] = [false; 9];
                         impossiblepos
@@ -343,8 +346,7 @@ fn main() {
                             ));
                         }
                     });
-                }
-                _ => {}
+                });
             });
         });
         // If there is nothing else to do then stop recursing

@@ -6,93 +6,14 @@
 #[global_allocator]
 static GLOBAL: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
-use std::{
-    io::stdout,
-    thread,
-    time::{Duration, Instant},
-};
+use std::time::Instant;
 
-use crossterm::{
-    event, execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
 use dashmap::DashSet;
 use rayon::iter::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
 };
-use tui::{
-    backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
-    text::{Span, Spans},
-    widgets::{Block, Borders, Paragraph},
-    Terminal,
-};
-
-// How often tui checks for keypresses
-const TICKRATE: Duration = Duration::from_millis(250);
-
-// We use this macro to draw to the terminal
-macro_rules! draw {
-    ($a:expr, $b:expr) => {
-        $a.draw(|f| {
-            let text = vec![
-                Spans::from(format!("{:?}", $b[0])),
-                Spans::from(format!("{:?}", $b[1])),
-                Spans::from(format!("{:?}", $b[2])),
-                Spans::from(format!("{:?}", $b[3])),
-                Spans::from(format!("{:?}", $b[4])),
-                Spans::from(format!("{:?}", $b[5])),
-                Spans::from(format!("{:?}", $b[6])),
-                Spans::from(format!("{:?}", $b[7])),
-                Spans::from(format!("{:?}", $b[8])),
-            ];
-
-            let size = f.size();
-
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .margin(5)
-                .constraints([Constraint::Percentage(100)].as_ref())
-                .split(size);
-
-            let block = tui::widgets::Block::default()
-                .borders(tui::widgets::Borders::ALL)
-                .title("Sudoku Solver")
-                .border_type(tui::widgets::BorderType::Rounded);
-            f.render_widget(block, size);
-            let create_block = |title| {
-                Block::default()
-                    .borders(Borders::ALL)
-                    .style(Style::default().bg(Color::White).fg(Color::Black))
-                    .title(Span::styled(
-                        title,
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ))
-            };
-            let paragraph = Paragraph::new(text.clone())
-                .style(Style::default().bg(Color::White).fg(Color::Black))
-                .block(create_block("Board"))
-                .alignment(Alignment::Center);
-            f.render_widget(paragraph, chunks[0]);
-        })
-        .unwrap();
-    };
-}
 
 fn main() {
-    // Initializiation
-    enable_raw_mode().unwrap();
-
-    let mut stdout = stdout();
-    execute!(stdout, EnterAlternateScreen).unwrap();
-
-    let backend = CrosstermBackend::new(stdout);
-
-    let mut terminal = Terminal::new(backend).unwrap();
-
-    terminal.clear().unwrap();
-
     // The sudoku board
     let mut board: [[u8; 9]; 9] = serde_json::from_str(
         &std::fs::read_to_string("./puzzle.json").unwrap_or_else(|_| {
@@ -350,7 +271,7 @@ fn main() {
             });
         });
         // If there is nothing else to do then stop recursing
-        if additions.iter().count() == 0 {
+        if additions.len() == 0 {
             recurse = false;
         } else {
             // If there is still more to do, dump our previous iteration onto the board and repeat
@@ -374,40 +295,6 @@ fn main() {
     let end = time.elapsed();
 
     // The rest of the code simply displays the puzzle to the screen
-    draw!(terminal, board);
-
-    let (tx, rx) = crossbeam_channel::unbounded();
-
-    thread::spawn(move || loop {
-        let mut last_tick = Instant::now();
-        if event::poll(
-            TICKRATE
-                .checked_sub(last_tick.elapsed())
-                .unwrap_or_else(|| Duration::from_secs(0)),
-        )
-        .unwrap()
-        {
-            if let event::Event::Key(key) = event::read().unwrap() {
-                tx.send(key).unwrap();
-            }
-        }
-        if last_tick.elapsed() >= TICKRATE {
-            last_tick = Instant::now();
-        }
-    });
-
-    loop {
-        match rx.recv().unwrap() {
-            event => match event.code {
-                event::KeyCode::Char('q') | event::KeyCode::Enter => {
-                    disable_raw_mode().unwrap();
-                    execute!(terminal.backend_mut(), LeaveAlternateScreen).unwrap();
-                    terminal.show_cursor().unwrap();
-                    println!("Solved in: {:?} millis", end.as_millis());
-                    break;
-                }
-                _ => {}
-            },
-        };
-    }
+    println!("{:?}", board);
+    println!("Solved in: {:?} millis", end.as_millis());
 }

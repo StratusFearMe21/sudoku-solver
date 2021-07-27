@@ -8,10 +8,7 @@ edition = "2018"
 
 [dependencies]
 rayon = "*"
-tui = { version = "*", default-features = false, features = ["crossterm"] }
-crossterm = "*"
 dashmap = "*"
-crossbeam-channel = "*"
 serde_json = "*"
 
 [target.'cfg(not(windows))'.dependencies]

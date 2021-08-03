@@ -197,9 +197,9 @@ fn main() {
                 });
             });
             // At this point, we start to actually insert numbers into the board based on the places where the number cannot go
-            rayon::scope(|s| {
-                // Analyze rows
-                s.spawn(|_| {
+            // Analyze rows
+            rayon::join(
+                || {
                     // Iterate through each row
                     (0 as usize..9 as usize).into_par_iter().for_each(|row| {
                         // We use this variable to determine where in the row it is not possible to place the number
@@ -227,9 +227,9 @@ fn main() {
                             ));
                         }
                     });
-                });
+                },
                 // Analyze columns
-                s.spawn(|_| {
+                || {
                     (0 as usize..9 as usize).into_par_iter().for_each(|column| {
                         let mut rowabs: [bool; 9] = [false; 9];
                         impossiblepos
@@ -250,8 +250,8 @@ fn main() {
                             ));
                         }
                     });
-                });
-            });
+                },
+            );
         });
         // If there is nothing else to do then stop recursing
         if additions.len() == 0 {
